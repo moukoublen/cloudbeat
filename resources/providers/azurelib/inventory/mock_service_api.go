@@ -137,6 +137,60 @@ func (_c *MockServiceAPI_ListAllAssetTypesByName_Call) RunAndReturn(run func(con
 	return _c
 }
 
+// ListDiagnosticSettingsAssetTypes provides a mock function with given fields: ctx
+func (_m *MockServiceAPI) ListDiagnosticSettingsAssetTypes(ctx context.Context) ([]AzureAsset, error) {
+	ret := _m.Called(ctx)
+
+	var r0 []AzureAsset
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context) ([]AzureAsset, error)); ok {
+		return rf(ctx)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context) []AzureAsset); ok {
+		r0 = rf(ctx)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]AzureAsset)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context) error); ok {
+		r1 = rf(ctx)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockServiceAPI_ListDiagnosticSettingsAssetTypes_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ListDiagnosticSettingsAssetTypes'
+type MockServiceAPI_ListDiagnosticSettingsAssetTypes_Call struct {
+	*mock.Call
+}
+
+// ListDiagnosticSettingsAssetTypes is a helper method to define mock.On call
+//   - ctx context.Context
+func (_e *MockServiceAPI_Expecter) ListDiagnosticSettingsAssetTypes(ctx interface{}) *MockServiceAPI_ListDiagnosticSettingsAssetTypes_Call {
+	return &MockServiceAPI_ListDiagnosticSettingsAssetTypes_Call{Call: _e.mock.On("ListDiagnosticSettingsAssetTypes", ctx)}
+}
+
+func (_c *MockServiceAPI_ListDiagnosticSettingsAssetTypes_Call) Run(run func(ctx context.Context)) *MockServiceAPI_ListDiagnosticSettingsAssetTypes_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context))
+	})
+	return _c
+}
+
+func (_c *MockServiceAPI_ListDiagnosticSettingsAssetTypes_Call) Return(_a0 []AzureAsset, _a1 error) *MockServiceAPI_ListDiagnosticSettingsAssetTypes_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockServiceAPI_ListDiagnosticSettingsAssetTypes_Call) RunAndReturn(run func(context.Context) ([]AzureAsset, error)) *MockServiceAPI_ListDiagnosticSettingsAssetTypes_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // NewMockServiceAPI creates a new instance of MockServiceAPI. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewMockServiceAPI(t interface {

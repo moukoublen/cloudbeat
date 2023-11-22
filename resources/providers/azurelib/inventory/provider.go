@@ -20,10 +20,13 @@ package inventory
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/monitor/armmonitor"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resourcegraph/armresourcegraph"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armsubscriptions"
 	"github.com/elastic/elastic-agent-libs/logp"
@@ -37,14 +40,15 @@ import (
 type Provider struct {
 	log           *logp.Logger
 	client        *AzureClientWrapper
-	subscriptions map[string]string
+	subscriptions map[string]string // Key: subscription ID, value: display name
 	Config        auth.AzureFactoryConfig
 }
 
 type ProviderInitializer struct{}
 
 type AzureClientWrapper struct {
-	AssetQuery func(ctx context.Context, query armresourcegraph.QueryRequest, options *armresourcegraph.ClientResourcesOptions) (armresourcegraph.ClientResourcesResponse, error)
+	AssetQuery              func(ctx context.Context, query armresourcegraph.QueryRequest, options *armresourcegraph.ClientResourcesOptions) (armresourcegraph.ClientResourcesResponse, error)
+	AssetDiagnosticSettings func(subID string, options *armmonitor.DiagnosticSettingsClientListOptions) *runtime.Pager[armmonitor.DiagnosticSettingsClientListResponse]
 }
 
 type AzureAsset struct {
@@ -63,8 +67,12 @@ type AzureAsset struct {
 type ServiceAPI interface {
 	// ListAllAssetTypesByName List all content types of the given assets types
 	ListAllAssetTypesByName(ctx context.Context, assetsGroup string, assets []string) ([]AzureAsset, error)
+	ListDiagnosticSettingsAssetTypes(ctx context.Context) ([]AzureAsset, error)
 	GetSubscriptions() map[string]string
 }
+
+// ensure interface compliance at compile time.
+var _ ServiceAPI = (*Provider)(nil)
 
 type ProviderInitializerAPI interface {
 	// Init initializes the Azure asset client
@@ -74,17 +82,26 @@ type ProviderInitializerAPI interface {
 func (p *ProviderInitializer) Init(ctx context.Context, log *logp.Logger, azureConfig auth.AzureFactoryConfig) (ServiceAPI, error) {
 	log = log.Named("azure")
 
-	clientFactory, err := armresourcegraph.NewClientFactory(azureConfig.Credentials, nil)
+	// init azure resource graph client
+	resourceGraphClientFactory, err := armresourcegraph.NewClientFactory(azureConfig.Credentials, nil)
+	if err != nil {
+		return nil, err
+	}
+	resourceGraphClient := resourceGraphClientFactory.NewClient()
+
+	// init azure monitor client
+	diagnosticSettingsClient, err := armmonitor.NewDiagnosticSettingsClient(azureConfig.Credentials, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	client := clientFactory.NewClient()
-
 	// We wrap the client, so we can mock it in tests
 	wrapper := &AzureClientWrapper{
 		AssetQuery: func(ctx context.Context, query armresourcegraph.QueryRequest, options *armresourcegraph.ClientResourcesOptions) (armresourcegraph.ClientResourcesResponse, error) {
-			return client.Resources(ctx, query, options)
+			return resourceGraphClient.Resources(ctx, query, options)
+		},
+		AssetDiagnosticSettings: func(subID string, options *armmonitor.DiagnosticSettingsClientListOptions) *runtime.Pager[armmonitor.DiagnosticSettingsClientListResponse] {
+			return diagnosticSettingsClient.NewListPager(fmt.Sprintf("/subscriptions/%s/", subID), options)
 		},
 	}
 
@@ -157,6 +174,35 @@ func (p *Provider) ListAllAssetTypesByName(ctx context.Context, assetsGroup stri
 	return resAssets, nil
 }
 
+func (p *Provider) ListDiagnosticSettingsAssetTypes(ctx context.Context) ([]AzureAsset, error) {
+	p.log.Infof("Listing Azure Diagnostic Monitor Settings")
+
+	assets := make([]AzureAsset, 0, 8)
+
+	for subID, subName := range p.subscriptions {
+		pager := p.client.AssetDiagnosticSettings(subID, nil)
+		res, err := readPager(ctx, pager)
+		if err != nil {
+			return nil, err
+		}
+
+		for i := range res {
+			for _, v := range res[i].Value {
+				if v == nil {
+					continue
+				}
+				a, err := p.transformDiagnosticSettingsResource(v, subID, subName)
+				if err != nil {
+					return nil, fmt.Errorf("error wile parsing azure asset model: %w", err)
+				}
+				assets = append(assets, a)
+			}
+		}
+	}
+
+	return assets, nil
+}
+
 func (p *Provider) GetSubscriptions() map[string]string {
 	return p.subscriptions
 }
@@ -223,4 +269,57 @@ func (p *Provider) getAssetFromData(data map[string]any) AzureAsset {
 func getString(data map[string]any, key string) string {
 	value, _ := data[key].(string)
 	return value
+}
+
+func (p *Provider) transformDiagnosticSettingsResource(v *armmonitor.DiagnosticSettingsResource, subID, subName string) (AzureAsset, error) {
+	properties, err := p.transformDiagnosticSettings(v.Properties)
+	if err != nil {
+		return AzureAsset{}, err
+	}
+
+	return AzureAsset{
+		Id:               strings.Dereference(v.ID),
+		Name:             strings.Dereference(v.Name),
+		Location:         "",
+		Properties:       properties,
+		ResourceGroup:    "",
+		SubscriptionId:   subID,
+		SubscriptionName: subName,
+		TenantId:         "",
+		Sku:              "",
+		Type:             strings.Dereference(v.Type),
+	}, nil
+}
+
+func (p *Provider) transformDiagnosticSettings(d *armmonitor.DiagnosticSettings) (map[string]any, error) {
+	if d == nil {
+		return nil, nil
+	}
+
+	js, err := d.MarshalJSON()
+	if err != nil {
+		return nil, err
+	}
+
+	m := map[string]any{}
+	err = json.Unmarshal(js, &m)
+	if err != nil {
+		return nil, err
+	}
+
+	return m, nil
+}
+
+func readPager[T any](ctx context.Context, pager *runtime.Pager[T]) ([]T, error) {
+	res := make([]T, 0, 8)
+	for pager.More() {
+		r, err := pager.NextPage(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		res = append(res, r)
+	}
+
+	return res, nil
 }
