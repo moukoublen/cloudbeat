@@ -20,6 +20,7 @@ package flavors
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/elastic/beats/v7/libbeat/beat"
 	agentconfig "github.com/elastic/elastic-agent-libs/config"
@@ -50,6 +51,12 @@ func newPostureFromCfg(b *beat.Beat, cfg *config.Config) (*posture, error) {
 	log := logp.NewLogger("posture")
 	log.Info("Config initiated with cycle period of ", cfg.Period)
 	ctx, cancel := context.WithCancel(context.Background())
+
+	// when the
+	if strings.HasPrefix(cfg.CloudConfig.Aws.Cred.AccessKeyID, "arn:aws") {
+		log.Info("Config initiated with cloud connectors with remote role to assume ", cfg.CloudConfig.Aws.Cred.AccessKeyID)
+		cfg.CloudConfig.Aws.CloudConnectors = true
+	}
 
 	strategy, err := benchmark.GetStrategy(cfg, log)
 	if err != nil {

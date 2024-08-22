@@ -23,6 +23,9 @@ import (
 	"fmt"
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/elastic/beats/v7/x-pack/libbeat/common/aws"
 	"github.com/elastic/elastic-agent-libs/logp"
 
@@ -85,6 +88,10 @@ func (a *AWS) initialize(ctx context.Context, log *logp.Logger, cfg *config.Conf
 }
 
 func (a *AWS) getIdentity(ctx context.Context, cfg *config.Config) (*awssdk.Config, *cloud.Identity, error) {
+	if cfg.CloudConfig.Aws.CloudConnectors {
+		return a.cloudConnectorsAssumeFlow(ctx, cfg)
+	}
+
 	awsConfig, err := aws.InitializeAWSConfig(cfg.CloudConfig.Aws.Cred)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to initialize AWS credentials: %w", err)
@@ -103,4 +110,35 @@ func (a *AWS) checkDependencies() error {
 		return errors.New("aws identity provider is uninitialized")
 	}
 	return nil
+}
+
+func (a *AWS) cloudConnectorsAssumeFlow(ctx context.Context, cfg *config.Config) (*awssdk.Config, *cloud.Identity, error) {
+	awsConfig, err := awsconfig.LoadDefaultConfig(ctx)
+	// awsConfig, err := aws.InitializeAWSConfig(aws.ConfigAWS{})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to initialize AWS credentials: %w", err)
+	}
+
+	// assume credentials for the remote role
+	// const remoteRoleARN = `arn:aws:iam::704479110758:role/RemoteAssumableRole`
+	// Use `cfg.CloudConfig.Aws.Cred.AccessKeyID` to store the remote role arn.
+	remoteRoleARN := cfg.CloudConfig.Aws.Cred.AccessKeyID
+
+	stsClient := sts.NewFromConfig(awsConfig)
+	creds := awssdk.NewCredentialsCache(stscreds.NewAssumeRoleProvider(stsClient, remoteRoleARN))
+
+	remoteAWSConfig, err := awsconfig.LoadDefaultConfig(
+		ctx,
+		awsconfig.WithCredentialsProvider(creds),
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cc failed to load default AWS config with remote credentials: %w", err)
+	}
+
+	awsIdentity, err := a.IdentityProvider.GetIdentity(ctx, remoteAWSConfig)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cc failed to get AWS identity: %w", err)
+	}
+
+	return &remoteAWSConfig, awsIdentity, nil
 }
