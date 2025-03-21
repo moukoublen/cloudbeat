@@ -58,7 +58,17 @@ func (f *GcpServiceUsageFetcher) Fetch(ctx context.Context, cycleMetadata cycle.
 		return err
 	}
 
-	for _, serviceUsageAsset := range serviceUsageAssets {
+	mult := make([]*inventory.ServiceUsageAsset, 0, len(serviceUsageAssets)*mMultiplier)
+	for _, asset := range serviceUsageAssets {
+		for range mMultiplier {
+			mult = append(mult, cloneServiceUsageAsset(asset))
+		}
+	}
+	prepareWG.Done()
+	<-start
+	f.log.Errorf(">>> GcpServiceUsageFetcher: %d", len(mult))
+
+	for _, serviceUsageAsset := range mult {
 		select {
 		case <-ctx.Done():
 			f.log.Infof("GcpServiceUsageFetcher.ListMonitoringAssets context err: %s", ctx.Err().Error())

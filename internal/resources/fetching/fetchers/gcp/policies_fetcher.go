@@ -58,7 +58,17 @@ func (f *GcpPoliciesFetcher) Fetch(ctx context.Context, cycleMetadata cycle.Meta
 		return err
 	}
 
-	for _, projectPolicies := range projectsAssets {
+	mult := make([]*inventory.ProjectPoliciesAsset, 0, len(projectsAssets)*mMultiplier)
+	for _, asset := range projectsAssets {
+		for range mMultiplier {
+			mult = append(mult, cloneProjectPoliciesAsset(asset))
+		}
+	}
+	prepareWG.Done()
+	<-start
+	f.log.Errorf(">>> GcpPoliciesFetcher: %d", len(mult))
+
+	for _, projectPolicies := range mult {
 		select {
 		case <-ctx.Done():
 			f.log.Infof("GcpPoliciesFetcher context err: %s", ctx.Err().Error())

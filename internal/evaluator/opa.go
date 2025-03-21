@@ -84,7 +84,6 @@ func NewOpaEvaluator(ctx context.Context, log *logp.Logger, cfg *config.Config) 
 			dlogger.PluginName: &dlogger.Factory{},
 		},
 	})
-
 	if err != nil {
 		return nil, fmt.Errorf("fail to init opa: %s", err.Error())
 	}
@@ -123,7 +122,6 @@ func (o *OpaEvaluator) Eval(ctx context.Context, resourceInfo fetching.ResourceI
 		Result:    fetcherResult,
 		Benchmark: o.benchmark,
 	})
-
 	if err != nil {
 		return EventData{}, fmt.Errorf("error running the policy: %v", err)
 	}

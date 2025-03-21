@@ -97,6 +97,7 @@ func (m *Manager) fetchIteration(ctx context.Context) {
 
 	seq := time.Now().Unix()
 	m.log.Infof("Cycle %d has started", seq)
+	m.log.Errorf(">>> Cycle %d has started", seq)
 	wg := &sync.WaitGroup{}
 	for _, key := range m.fetcherRegistry.Keys() {
 		wg.Add(1)
@@ -112,6 +113,7 @@ func (m *Manager) fetchIteration(ctx context.Context) {
 	wg.Wait()
 	m.log.Infof("Manager finished waiting and sending data after %d milliseconds", time.Since(start).Milliseconds())
 	m.log.Infof("Cycle %d resource fetching has ended", seq)
+	m.log.Errorf(">>> Cycle %d resource fetching has ended", seq)
 }
 
 func (m *Manager) fetchSingle(ctx context.Context, k string, cycleMetadata cycle.Metadata) error {

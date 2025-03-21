@@ -58,7 +58,17 @@ func (f *GcpLogSinkFetcher) Fetch(ctx context.Context, cycleMetadata cycle.Metad
 		return err
 	}
 
+	mult := make([]*inventory.LoggingAsset, 0, len(loggingAssets)*mMultiplier)
 	for _, asset := range loggingAssets {
+		for range mMultiplier {
+			mult = append(mult, cloneLoggingAsset(asset))
+		}
+	}
+	prepareWG.Done()
+	<-start
+	f.log.Errorf(">>> GcpLogSinkFetcher: %d", len(mult))
+
+	for _, asset := range mult {
 		select {
 		case <-ctx.Done():
 			f.log.Infof("GcpLogSinkFetcher.ListMonitoringAssets context err: %s", ctx.Err().Error())

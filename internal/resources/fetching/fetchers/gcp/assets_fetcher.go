@@ -20,16 +20,49 @@ package fetchers
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strings"
+	"sync"
 
+	"cloud.google.com/go/asset/apiv1/assetpb"
 	"github.com/elastic/elastic-agent-libs/logp"
 	"github.com/huandu/xstrings"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/elastic/cloudbeat/internal/resources/fetching"
 	"github.com/elastic/cloudbeat/internal/resources/fetching/cycle"
 	"github.com/elastic/cloudbeat/internal/resources/providers/gcplib/inventory"
 )
+
+var (
+	prepareWG = sync.WaitGroup{}
+	start     = make(chan struct{}, 10)
+)
+
+func init() {
+	prepareWG.Add(2)
+	go func() {
+		prepareWG.Wait()
+		close(start)
+	}()
+}
+
+const (
+	subLen      = 1000
+	mMultiplier = 900
+)
+
+var multipliers = map[string]int{
+	fetching.ProjectManagement: 1,
+	fetching.KeyManagement:     1,
+	fetching.CloudIdentity:     1,
+	fetching.CloudDatabase:     1,
+	fetching.CloudStorage:      1,
+	fetching.CloudCompute:      1,
+	fetching.CloudDns:          1,
+	fetching.DataProcessing:    1,
+}
 
 type GcpAssetsFetcher struct {
 	log        *logp.Logger
@@ -94,6 +127,7 @@ func NewGcpAssetsFetcher(_ context.Context, log *logp.Logger, ch chan fetching.R
 }
 
 func (f *GcpAssetsFetcher) Fetch(ctx context.Context, cycleMetadata cycle.Metadata) error {
+	return nil
 	f.log.Info("Starting GcpAssetsFetcher.Fetch")
 
 	for typeName, assetTypes := range GcpAssetTypes {
@@ -103,7 +137,16 @@ func (f *GcpAssetsFetcher) Fetch(ctx context.Context, cycleMetadata cycle.Metada
 			continue
 		}
 
+		mm := multipliers[typeName]
+		mult := make([]*inventory.ExtendedGcpAsset, 0, len(assets)*mm)
 		for _, asset := range assets {
+			for range mm {
+				mult = append(mult, cloneExtendedGcpAsset(asset))
+			}
+		}
+		f.log.Errorf(">>> GcpAssetsFetcher %s: %d", typeName, len(mult))
+
+		for _, asset := range mult {
 			select {
 			case <-ctx.Done():
 				f.log.Infof("GcpAssetsFetcher.Fetch context err: %s", ctx.Err().Error())
@@ -221,4 +264,65 @@ func getAssetDataFields(asset *inventory.ExtendedGcpAsset) map[string]*structpb.
 		return nil
 	}
 	return data.GetFields()
+}
+
+func cloneExtendedGcpAsset(e *inventory.ExtendedGcpAsset) *inventory.ExtendedGcpAsset {
+	n := &inventory.ExtendedGcpAsset{}
+	n.CloudAccount = e.CloudAccount
+	n.Asset = proto.Clone(e.Asset).(*assetpb.Asset)
+	n.Asset.Name += "_" + randString(10)
+	return n
+}
+
+func cloneExtendedGcpAssets(e []*inventory.ExtendedGcpAsset, subLen int) []*inventory.ExtendedGcpAsset {
+	if len(e) > subLen {
+		return e
+	}
+
+	sl := make([]*inventory.ExtendedGcpAsset, 0, subLen)
+	l := len(e)
+	for i := range subLen {
+		a := e[i%l]
+		sl = append(sl, cloneExtendedGcpAsset(a))
+	}
+	return sl
+}
+
+func cloneServiceUsageAsset(e *inventory.ServiceUsageAsset) *inventory.ServiceUsageAsset {
+	n := &inventory.ServiceUsageAsset{}
+	n.CloudAccount = e.CloudAccount
+	n.Services = cloneExtendedGcpAssets(e.Services, subLen)
+	return n
+}
+
+func cloneProjectPoliciesAsset(e *inventory.ProjectPoliciesAsset) *inventory.ProjectPoliciesAsset {
+	n := &inventory.ProjectPoliciesAsset{}
+	n.CloudAccount = e.CloudAccount
+	n.Policies = cloneExtendedGcpAssets(e.Policies, subLen)
+	return n
+}
+
+func cloneLoggingAsset(e *inventory.LoggingAsset) *inventory.LoggingAsset {
+	n := &inventory.LoggingAsset{}
+	n.CloudAccount = e.CloudAccount
+	n.LogSinks = cloneExtendedGcpAssets(e.LogSinks, subLen)
+	return n
+}
+
+func cloneMonitoringAsset(e *inventory.MonitoringAsset) *inventory.MonitoringAsset {
+	n := &inventory.MonitoringAsset{}
+	n.CloudAccount = e.CloudAccount
+	n.LogMetrics = cloneExtendedGcpAssets(e.LogMetrics, subLen)
+	n.Alerts = cloneExtendedGcpAssets(e.Alerts, subLen)
+	return n
+}
+
+const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+func randString(n int) string {
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = letterBytes[rand.Intn(len(letterBytes))]
+	}
+	return string(b)
 }

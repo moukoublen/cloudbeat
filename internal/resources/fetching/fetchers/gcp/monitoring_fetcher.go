@@ -63,7 +63,17 @@ func (f *GcpMonitoringFetcher) Fetch(ctx context.Context, cycleMetadata cycle.Me
 		return err
 	}
 
-	for _, monitoringAsset := range monitoringAssets {
+	mult := make([]*inventory.MonitoringAsset, 0, len(monitoringAssets)*mMultiplier)
+	for _, asset := range monitoringAssets {
+		for range mMultiplier {
+			mult = append(mult, cloneMonitoringAsset(asset))
+		}
+	}
+	prepareWG.Done()
+	<-start
+	f.log.Errorf(">>> GcpMonitoringFetcher: %d", len(mult))
+
+	for _, monitoringAsset := range mult {
 		select {
 		case <-ctx.Done():
 			f.log.Infof("GcpMonitoringFetcher.ListMonitoringAssets context err: %s", ctx.Err().Error())
